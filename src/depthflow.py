@@ -68,11 +68,14 @@ class CustomDepthflowScene(DepthScene):
         # Make sure arrays are in the right format (uint8 for RGB images)
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
-        if depth.dtype != np.uint8:
+        if depth is not None and depth.dtype != np.uint8:
             depth = (depth * 255).astype(np.uint8)
 
         image_pil = Image.fromarray(image)
-        depth_pil = Image.fromarray(depth)
+        if depth is not None:
+            depth_pil = Image.fromarray(depth)
+        else:
+            depth_pil = self.config.estimator.estimate(image)
 
         # Match rendering resolution to image
         self.resolution = (image_pil.width, image_pil.height)
@@ -183,17 +186,17 @@ class MyDepthflowScene(DepthScene):
         # Make sure arrays are in the right format (uint8 for RGB images)
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
-        if depth.dtype != np.uint8:
-            depth = (depth * 255).astype(np.uint8)
+        # if depth.dtype != np.uint8:
+        #     depth = (depth * 255).astype(np.uint8)
 
         image_pil = Image.fromarray(image)
-        depth_pil = Image.fromarray(depth)
+        # depth_pil = Image.fromarray(depth)
 
         # Match rendering resolution to image
         self.resolution = (image_pil.width, image_pil.height)
         self.aspect_ratio = (image_pil.width / image_pil.height)
         self.image.from_image(image_pil)
-        self.depth.from_image(depth_pil)
+        # self.depth.from_image(depth_pil)
 
 
 class Depthflow:
@@ -202,7 +205,6 @@ class Depthflow:
         return {
             "required": {
                 "image": ("IMAGE",),  # Input image
-                "depth_map": ("IMAGE",),  # Depthmap input
                 "animation_speed": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.01, "step": 0.01},
@@ -222,6 +224,7 @@ class Depthflow:
                 "tiling_mode": (["mirror", "repeat", "none"], {"default": "mirror"}),
             },
             "optional": {
+                "depth_map": ("IMAGE",),  # Depthmap input
                 "motion": ("DEPTHFLOW_MOTION",),  # Motion object
                 "effects": ("DEPTHFLOW_EFFECTS",),  # DepthState object
             },
@@ -229,6 +232,7 @@ class Depthflow:
 
     RETURN_TYPES = (
         "IMAGE",
+        "MASK",
     )  # Output is a batch of images (torch.Tensor with shape [B,H,W,C])
     FUNCTION = "apply_depthflow"
     CATEGORY = "🌊 Depthflow"
@@ -265,7 +269,6 @@ class Depthflow:
     def apply_depthflow(
         self,
         image,
-        depth_map,
         animation_speed,
         input_fps,
         output_fps,
@@ -274,6 +277,7 @@ class Depthflow:
         ssaa,
         invert,
         tiling_mode,
+        depth_map=None,
         motion=None,
         effects=None,
     ):
@@ -296,29 +300,28 @@ class Depthflow:
             image = image.cpu().numpy()
         else:
             image = image.numpy()
-        if depth_map.is_cuda:
+        if depth_map is not None and depth_map.is_cuda:
             depth_map = depth_map.cpu().numpy()
-        else:
+        elif depth_map is not None:
             depth_map = depth_map.numpy()
 
         if image.ndim != 4:
             raise ValueError(f"Unsupported image shape: {image.shape}")
 
-        if depth_map.ndim != 4:
+        if depth_map is not None and depth_map.ndim != 4:
             raise ValueError(f"Unsupported depth_map shape: {depth_map.shape}")
 
         if image.shape[0] != 1:
             raise ValueError(f"Unsupported image shape: {image.shape}")
 
-        if depth_map.shape[0] != 1:
+        if depth_map is not None and depth_map.shape[0] != 1:
             raise ValueError(f"Unsupported depth_map shape: {depth_map.shape}")
 
         # Get width and height of images
         height, width = image.shape[1], image.shape[2]
 
         # Input the image and depthmap into the scene
-        scene.input(image[0], depth=depth_map[0])
-
+        scene.input(image[0], depth=depth_map[0] if depth_map is not None else None)
 
         # Alternatively, if your scene has a helper method:
         scene.inpaint(
@@ -361,7 +364,11 @@ class Depthflow:
         scene.clear_frames()
         self.end_progress()
 
+        # Create mask from the green channel
+        # Extract green channel (index 1), check if values are at maximum (255)
+        mask = (video[:, :, :, 1] == 255).float()
+
         # Normalize the video frames to [0, 1]
         video = video.float() / 255.0
 
-        return (video,)
+        return (video, mask)
