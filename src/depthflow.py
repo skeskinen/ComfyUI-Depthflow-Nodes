@@ -1,6 +1,6 @@
 import torch
 from DepthFlow.Scene import DepthScene
-from DepthFlow.Animation import Animation
+from DepthFlow.Animation import Animation, Target
 from Broken.Loaders import LoadableImage, LoadImage
 
 import numpy as np
@@ -24,35 +24,14 @@ class CustomDepthflowScene(DepthScene):
         state=None,
         effects=None,
         progress_callback=None,
-        num_frames=30,
-        input_fps=30.0,
-        output_fps=30.0,
-        animation_speed=1.0,
         **kwargs,
     ):
         DepthScene.__init__(self, **kwargs)
         self.frames = deque()
         self.progress_callback = progress_callback
-        # Override state with keywords in state
-        self.override_state = state
-        self.time = 0.00001
         # Initialize images and depth_maps
         self.images = None
         self.depth_maps = None
-        self.input_fps = input_fps
-        self.output_fps = output_fps
-        self.animation_speed = animation_speed
-        self.num_frames = num_frames
-        self.video_time = 0.0
-        self.frame_index = 0
-
-    # # TODO: This is a temporary fix to while build gets fixed
-    # def build(self):
-    #     self.image = ShaderTexture(scene=self, name="image").repeat(False)
-    #     self.depth = ShaderTexture(scene=self, name="depth").repeat(False)
-    #     self.normal = ShaderTexture(scene=self, name="normal")
-    #     self.shader.fragment = self.DEPTH_SHADER
-    #     self.ssaa = 1.2
 
     def _load_inputs(self, echo: bool=True) -> None:
         """Load inputs: single or batch exporting"""
@@ -82,57 +61,6 @@ class CustomDepthflowScene(DepthScene):
         self.aspect_ratio = (image_pil.width / image_pil.height)
         self.image.from_image(image_pil)
         self.depth.from_image(depth_pil)
-
-    def setup(self):
-        DepthScene.setup(self)
-        self.time += 0.00001  # prevent division by zero error
-
-    # def update(self):
-    #     self.log_info("update called")
-    #     frame_duration = 1.0 / self.input_fps
-
-    #     while self.time > self.video_time:
-    #         self.video_time += frame_duration
-    #         self.frame_index += 1
-
-    #     # Set the current image and depth map based on self.frame
-    #     if self.images is not None and self.depth_maps is not None:
-    #         frame_index = min(self.frame_index, len(self.images) - 1)
-    #         current_image = self.images[frame_index]
-    #         current_depth = self.depth_maps[frame_index]
-
-    #         # Convert to appropriate format if necessary
-    #         image = self.upscaler.upscale(LoadImage(current_image))
-    #         depth = LoadImage(current_depth)
-
-    #         # Set the current image and depth map
-    #         self.image.from_image(image)
-    #         self.depth.from_image(depth)
-
-    #     DepthScene.update(self)
-
-    #     if self.override_state:
-    #         for key, value in self.override_state.items():
-    #             if hasattr(self.state, key):
-    #                 setattr(self.state, key, value)
-
-    #         if "tiling_mode" in self.override_state:
-    #             if self.override_state["tiling_mode"] == "repeat":
-    #                 self.image.repeat(True)
-    #                 self.depth.repeat(True)
-    #                 self.state.mirror = False
-    #             elif self.override_state["tiling_mode"] == "mirror":
-    #                 self.image.repeat(False)
-    #                 self.depth.repeat(False)
-    #                 self.state.mirror = True
-    #             else:
-    #                 self.image.repeat(False)
-    #                 self.depth.repeat(False)
-    #                 self.state.mirror = False
-
-    @property
-    def tau(self) -> float:
-        return super().tau * self.animation_speed
 
     def next(self, dt):
         DepthScene.next(self, dt)
@@ -164,41 +92,6 @@ class CustomDepthflowScene(DepthScene):
         self.frames.clear()
         gc.collect()
 
-
-class MyDepthflowScene(DepthScene):
-
-    def _load_inputs(self, echo: bool=True) -> None:
-        """Load inputs: single or batch exporting"""
-        # Batch exporting implementation
-        image = self._get_batch_input(self.config.image)
-        depth = self._get_batch_input(self.config.depth)
-
-        if (image is None):
-            raise ShaderBatchStop()
-
-        self.log_warn("hellurei")
-
-        self.log_info(f'image.shape: {image.shape}', echo=echo)
-        self.log_info(f'depth.shape: {depth.shape}', echo=echo)
-
-        # Convert numpy arrays to PIL Images properly
-        # The error occurs because PIL.Image.fromarray() can't handle the data type directly
-        # Make sure arrays are in the right format (uint8 for RGB images)
-        if image.dtype != np.uint8:
-            image = (image * 255).astype(np.uint8)
-        # if depth.dtype != np.uint8:
-        #     depth = (depth * 255).astype(np.uint8)
-
-        image_pil = Image.fromarray(image)
-        # depth_pil = Image.fromarray(depth)
-
-        # Match rendering resolution to image
-        self.resolution = (image_pil.width, image_pil.height)
-        self.aspect_ratio = (image_pil.width / image_pil.height)
-        self.image.from_image(image_pil)
-        # self.depth.from_image(depth_pil)
-
-
 class Depthflow:
     @classmethod
     def INPUT_TYPES(cls):
@@ -220,6 +113,27 @@ class Depthflow:
                 "invert": (
                     "FLOAT",
                     {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+                "animation_intensity": (
+                    "FLOAT",
+                    {"default": 1.5, "min": -5.0, "max": 5.0, "step": 0.1},
+                ),
+                "animation_mode": (["zoom", "dolly", "circle", "horizontal", "vertical"], {"default": "zoom"}),
+                "animation_smooth": (
+                    "BOOLEAN",
+                    {"default": False, "label": "Smooth"},
+                ),
+                "animation_loop": (
+                    "BOOLEAN",
+                    {"default": False, "label": "Loop"},
+                ),
+                "inpaint": (
+                    "BOOLEAN",
+                    {"default": False, "label": "Inpaint"},
+                ),
+                "inpaint_black": (
+                    "BOOLEAN",
+                    {"default": False, "label": "Inpaint Black"},
                 ),
                 "tiling_mode": (["mirror", "repeat", "none"], {"default": "mirror"}),
             },
@@ -277,6 +191,12 @@ class Depthflow:
         ssaa,
         invert,
         tiling_mode,
+        animation_intensity,
+        animation_mode,
+        animation_smooth,
+        animation_loop,
+        inpaint,
+        inpaint_black,
         depth_map=None,
         motion=None,
         effects=None,
@@ -324,17 +244,38 @@ class Depthflow:
         scene.input(image[0], depth=depth_map[0] if depth_map is not None else None)
 
         # Alternatively, if your scene has a helper method:
-        scene.inpaint(
-            enable=True,
-            black=False,
-            limit=0.8
-        )
+        if inpaint:
+            scene.inpaint(
+                enable=True,
+                black=inpaint_black,
+                limit=0.8
+            )
 
-        scene.zoom(
-            intensity=1.5,
-            smooth=False,
-            loop=False
-        )
+        if animation_mode == "zoom":
+            scene.zoom(
+                intensity=animation_intensity,
+                smooth=animation_smooth,
+                loop=animation_loop
+            )
+        elif animation_mode == "dolly":
+            scene.dolly(
+                intensity=animation_intensity,
+                smooth=animation_smooth,
+                loop=animation_loop
+            )
+        elif animation_mode == "circle":
+            scene.circle(
+                intensity=animation_intensity,
+                smooth=animation_smooth,
+                loop=animation_loop
+            )
+        elif animation_mode == "horizontal":
+            scene.horizontal(
+                intensity=animation_intensity,
+                smooth=animation_smooth,
+                loop=animation_loop,
+                # phase=0.5
+            )
 
         # Calculate the duration based on fps and num_frames
         if num_frames <= 0:
@@ -351,12 +292,11 @@ class Depthflow:
             fps=output_fps,
             time=duration,
             speed=1.0,
+            start=0.0,
             quality=quality,
             ssaa=ssaa,
-            scale=1.0,
             width=width,
             height=height,
-            ratio=None,
             freewheel=True,
         )
 
