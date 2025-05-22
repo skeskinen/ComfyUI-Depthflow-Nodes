@@ -117,7 +117,7 @@ class Depthflow:
                     "FLOAT",
                     {"default": 1.5, "min": -5.0, "max": 5.0, "step": 0.1},
                 ),
-                "animation_mode": (["zoom", "dolly", "circle", "horizontal", "vertical"], {"default": "zoom"}),
+                "animation_mode": (["zoom", "dolly", "circle", "horizontal", "vertical", "center_to_right", "center_to_left"], {"default": "zoom"}),
                 "animation_smooth": (
                     "BOOLEAN",
                     {"default": False, "label": "Smooth"},
@@ -273,8 +273,26 @@ class Depthflow:
                 intensity=animation_intensity,
                 smooth=animation_smooth,
                 loop=animation_loop,
+                isometric=0.9,
+                steady=0.4,
                 # phase=0.5
             )
+        elif animation_mode == "center_to_right":
+            scene.state.isometric = 0.9
+            scene.state.steady = 0.4
+            scene.linear(
+                target=Target.OffsetX,
+                hight=animation_intensity, # hight is a typo in the animation class
+            )
+            # anim.apply(scene)
+        elif animation_mode == "center_to_left":
+            scene.state.isometric = 0.9
+            scene.state.steady = 0.4
+            scene.linear(
+                target=Target.OffsetX,
+                hight=-animation_intensity,
+            )
+            # anim.apply(scene)
 
         # Calculate the duration based on fps and num_frames
         if num_frames <= 0:
@@ -311,3 +329,4 @@ class Depthflow:
         video = video.float() / 255.0
 
         return (video, mask)
+
